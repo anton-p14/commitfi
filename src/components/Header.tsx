@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Bell, LogOut, Home } from 'lucide-react';
+import { Bell, LogOut, Home, Coins } from 'lucide-react';
 import type { Page } from '../App';
+import { useFaucet } from '../hooks/useFaucet';
 
 interface HeaderProps {
   walletAddress: string | null;
@@ -10,6 +11,7 @@ interface HeaderProps {
 
 export function Header({ walletAddress, onDisconnect, onNavigate }: HeaderProps) {
   const [showDropdown, setShowDropdown] = useState(false);
+  const { mintTokens, isMinting } = useFaucet();
 
   const shortenAddress = (address: string) => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -38,6 +40,17 @@ export function Header({ walletAddress, onDisconnect, onNavigate }: HeaderProps)
               <Bell className="w-5 h-5" />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-emerald-500 rounded-full" />
             </button>
+
+            {walletAddress && (
+              <button
+                onClick={mintTokens}
+                disabled={isMinting}
+                className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg text-xs font-medium hover:bg-blue-500/20 transition-colors disabled:opacity-50"
+              >
+                <Coins className="w-3.5 h-3.5" />
+                {isMinting ? 'Minting...' : 'Get Test USDC'}
+              </button>
+            )}
 
             {walletAddress && (
               <div className="relative">
