@@ -1,0 +1,16 @@
+node_modules
+.env
+cache
+artifacts
+coverage
+typechain
+typechain-types
+
+# Hardhat files
+hardhat.config.js
+hardhat.config.ts
+
+# Misc
+.DS_Store
+.idea
+.vscode
