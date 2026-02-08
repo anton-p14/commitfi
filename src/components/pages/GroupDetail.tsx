@@ -26,7 +26,7 @@ export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
   const { address: walletAddress } = useAccount(); // Get current wallet
   const [bidAmount, setBidAmount] = useState('');
   const allGroups = useGroups();
-  const { lockGroup, placeBid, resolveRound, status } = useGroupActions(); // Use 'status' directly
+  const { lockGroup, placeBid, resolveRound, payContribution, status } = useGroupActions(); // Use 'status' directly
 
   const rawGroup = groupId ? allGroups.find(g => g.id === groupId) : null;
   const isAuctionType = rawGroup?.type === 'AUCTION';
@@ -58,13 +58,23 @@ export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
   const isActive = group.status === 'ACTIVE';
   const isAuction = group.type === 'AUCTION';
 
-  // Fetch Owner to restrict Lock Action
+  // Fetch Owner to restrict Lock Action & Check Contribution
   const { data: ownerAddress } = useReadContract({
     address: groupId as `0x${string}`,
     abi: isAuctionType ? AuctionGroupABI : StandardGroupABI,
     functionName: 'owner',
     args: [],
   });
+
+  const { data: hasContributedData } = useReadContract({
+    address: groupId as `0x${string}`,
+    abi: AuctionGroupABI,
+    functionName: 'hasContributed',
+    args: [rawGroup?.currentRound || 0, walletAddress],
+    query: { enabled: isAuctionType && !!walletAddress && !!rawGroup?.currentRound }
+  });
+
+  const hasContributed = Boolean(hasContributedData);
 
   // Use connected wallet from useAccount (wagmi) directly referenced in component? 
   // We need to import useAccount in GroupDetail or pass it down. 
@@ -76,11 +86,17 @@ export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
     }
   };
 
+  const handleContribution = () => {
+    if (groupId) {
+      payContribution(groupId);
+    }
+  };
+
   const currentMembersCount = group.members.length;
   // Calculate completion if active (mock logic using address hashing strictly for consistent demo visualization if needed, OR just 0)
   // Since we have no blocks passed logic yet, we'll show actual data available.
-  const completionPercentage = group.totalRounds && group.currentCycle
-    ? Math.round((group.currentCycle / group.totalRounds) * 100)
+  const completionPercentage = group.totalRounds && group.currentRound
+    ? Math.round((group.currentRound / group.totalRounds) * 100)
     : 0;
 
   return (
@@ -153,7 +169,7 @@ export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
                   <span className="text-xs">Current Round</span>
                 </div>
                 <div className="text-2xl font-bold">
-                  {group.currentCycle || 1} / {group.totalRounds || group.memberLimit}
+                  {group.currentRound || 1} / {group.totalRounds || group.memberLimit}
                 </div>
                 <div className="text-xs text-slate-400 mt-1">
                   {completionPercentage}% complete
@@ -207,6 +223,37 @@ export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
               </div>
             )}
 
+          </div>
+        )}
+
+        {/* Active Auction State - Contribution Status */}
+        {isActive && isAuction && (
+          <div className={`border rounded-xl p-6 mb-8 text-center ${hasContributed ? 'bg-green-500/5 border-green-500/20' : 'bg-orange-500/5 border-orange-500/20'}`}>
+            <h3 className="text-xl font-semibold mb-2">Round {group.currentRound} Status</h3>
+            <div className="flex justify-center items-center gap-2 mb-4">
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${hasContributed ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                {hasContributed ? 'Contribution Paid ✅' : 'Contribution Pending ⚠️'}
+              </span>
+            </div>
+
+            {!hasContributed && (
+              <div className="mb-4">
+                <p className="text-slate-400 text-sm mb-4">
+                  You must pay your contribution to remain active and avoid losing your collateral.
+                </p>
+                <button
+                  onClick={handleContribution}
+                  className="px-6 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-lg transition-colors shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2 mx-auto"
+                >
+                  {status === 'creating' || status === 'confirming_creation' || status === 'approving' ? 'Processing...' : `Pay Contribution (${group.contribution} USDC)`}
+                </button>
+              </div>
+            )}
+            {hasContributed && (
+              <p className="text-slate-400 text-sm">
+                You are active for this round. Good luck!
+              </p>
+            )}
           </div>
         )}
 

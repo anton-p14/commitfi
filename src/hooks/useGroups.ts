@@ -28,7 +28,8 @@ export function useGroups() {
             { address: addr, abi: StandardGroupABI as any, functionName: 'owner' },
             { address: addr, abi: StandardGroupABI as any, functionName: 'maxMembers' }, // +7
             { address: addr, abi: StandardGroupABI as any, functionName: 'frequency' },  // +8
-            { address: addr, abi: AuctionGroupABI as any, functionName: 'highestBidder' } // +9 (Probe for Auction)
+            { address: addr, abi: AuctionGroupABI as any, functionName: 'highestBidder' }, // +9 (Probe for Auction)
+            { address: addr, abi: AuctionGroupABI as any, functionName: 'collateral' }     // +10
         ]),
         query: {
             enabled: addresses.length > 0,
@@ -38,7 +39,7 @@ export function useGroups() {
     const groups: Group[] = [];
 
     if (results && addresses.length > 0) {
-        const fieldsPerGroup = 10;
+        const fieldsPerGroup = 11;
 
         addresses.forEach((addr, index) => {
             const offset = index * fieldsPerGroup;
@@ -52,6 +53,7 @@ export function useGroups() {
             const maxMembersRes = results[offset + 7];
             const freqRes = results[offset + 8];
             const auctionProbeRes = results[offset + 9];
+            const collateralRes = results[offset + 10]; // New
 
             if (nameRes.status === 'success') {
                 // Map status enum: 0=RECRUITING, 1=ACTIVE, 2=LOCKED, 3=COMPLETED
@@ -61,13 +63,15 @@ export function useGroups() {
                 const membersList = (membersRes.result as string[]) || [];
 
                 // Determine Type: If highestBidder probe succeeded, it's AUCTION.
-                // Note: StandardGroup does not have highestBidder, so call should fail/revert.
                 const isAuction = auctionProbeRes.status === 'success';
 
                 // Safely extract values
                 const contribution = contribRes.status === 'success' ? Number(formatUnits(BigInt(String(contribRes.result)), 6)) : 0;
+                // Collateral
+                const collateral = (isAuction && collateralRes.status === 'success') ? BigInt(String(collateralRes.result)) : BigInt(0);
+
                 const memberLimit = maxMembersRes.status === 'success' ? Number(maxMembersRes.result) : 10;
-                const currentRound = roundRes.status === 'success' ? Number(roundRes.result) : 0;
+                const currentRound = roundRes.status === 'success' ? Number(roundRes.result) : 0; // Contract starts 0 or 1?
                 const totalRounds = maxMembersRes.status === 'success' ? Number(maxMembersRes.result) : 10; // Fallback
 
                 // Frequency
@@ -88,7 +92,8 @@ export function useGroups() {
                     members: membersList,
                     status: statusStr,
                     frequency: freqStr,
-                    currentCycle: currentRound,
+                    currentRound: currentRound,
+                    collateral: collateral,     // Map correctly
                     totalRounds,
                     startDate: new Date().toISOString(), // Contract doesn't store start date publicly?
                     createdBy: String(ownerRes?.result || '0x0000000000000000000000000000000000000000')

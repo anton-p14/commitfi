@@ -9,12 +9,20 @@ contract AuctionGroup is Ownable {
     string public symbol;
     IERC20 public currency;
     uint256 public contribution;
+    uint256 public collateral; // New: 10% of contribution
     uint256 public maxMembers;
     uint256 public frequency;
     
     enum Status { RECRUITING, ACTIVE, LOCKED, COMPLETED }
     Status public groupStatus;
     
+    enum MemberStatus { ACTIVE, DEFAULTED }
+    struct MemberInfo {
+        MemberStatus status;
+        bool exists;
+    }
+    mapping(address => MemberInfo) public memberInfo;
+
     address[] public members;
     uint256 public currentRound;
     uint256 public totalRounds;
@@ -24,13 +32,16 @@ contract AuctionGroup is Ownable {
     address public highestBidder;
     uint256 public highestBid;
 
+    // Track contributions per round: roundId => member => paid?
+    mapping(uint256 => mapping(address => bool)) public hasContributed;
+
     event AuctionStarted(uint256 timestamp);
     event BidPlaced(address indexed bidder, uint256 amount);
     event RoundResolved(address indexed winner, uint256 payout, uint256 bidAmount, uint256 nextRoundStart);
+    event ContributionPaid(address indexed member, uint256 round);
+    event MemberDefaulted(address indexed member, uint256 round);
     
     uint256 public roundStart;
-    // For demo purposes, Auction Duration is short (e.g. 5 minutes) regardless of Cycle Frequency
-    // In production this might be a % of frequency or constructor arg.
     uint256 public constant AUCTION_DURATION = 5 minutes;
 
     mapping(address => bool) public hasReceivedPayout;
@@ -48,6 +59,7 @@ contract AuctionGroup is Ownable {
         symbol = _symbol;
         currency = IERC20(_currency);
         contribution = _contribution;
+        collateral = _contribution / 10; // 10% Collateral
         maxMembers = _maxMembers;
         frequency = _frequency;
         groupStatus = Status.RECRUITING;
@@ -56,12 +68,33 @@ contract AuctionGroup is Ownable {
     function join() external {
         require(groupStatus == Status.RECRUITING, "Group not recruiting");
         require(members.length < maxMembers, "Group full");
-        require(!isMember[msg.sender], "Already joined");
+        require(!memberInfo[msg.sender].exists, "Already joined");
         
-        require(currency.transferFrom(msg.sender, address(this), contribution), "Transfer failed");
+        // Transfer Contribution + Collateral
+        uint256 totalRequired = contribution + collateral;
+        require(currency.transferFrom(msg.sender, address(this), totalRequired), "Transfer failed");
 
         members.push(msg.sender);
         isMember[msg.sender] = true;
+        memberInfo[msg.sender] = MemberInfo({
+            status: MemberStatus.ACTIVE,
+            exists: true
+        });
+
+        // Mark Round 1 as paid (initial contribution covers it)
+        hasContributed[1][msg.sender] = true;
+    }
+
+    // New: Recurring Contribution
+    function payContribution() external {
+        require(groupStatus == Status.ACTIVE, "Group not active");
+        require(memberInfo[msg.sender].status == MemberStatus.ACTIVE, "Not active member");
+        require(!hasContributed[currentRound][msg.sender], "Already paid for this round");
+        
+        require(currency.transferFrom(msg.sender, address(this), contribution), "Transfer failed");
+        
+        hasContributed[currentRound][msg.sender] = true;
+        emit ContributionPaid(msg.sender, currentRound);
     }
 
     function lock() external onlyOwner {
@@ -69,7 +102,6 @@ contract AuctionGroup is Ownable {
         require(members.length > 1, "Not enough members");
         groupStatus = Status.ACTIVE;
         totalRounds = members.length;
-        // Start Cycle 1
         currentRound = 1;
         roundStart = block.timestamp;
         emit AuctionStarted(block.timestamp);
@@ -77,17 +109,14 @@ contract AuctionGroup is Ownable {
 
     function bid(uint256 amount) external {
         require(groupStatus == Status.ACTIVE, "Not active");
-        require(isMember[msg.sender], "Not a member");
+        require(memberInfo[msg.sender].status == MemberStatus.ACTIVE, "Not active member");
         require(!hasReceivedPayout[msg.sender], "Already paid out");
         require(amount > highestBid, "Bid too low");
-        
-        // Proper time check
         require(block.timestamp < roundStart + AUCTION_DURATION, "Auction ended"); 
 
         require(currency.transferFrom(msg.sender, address(this), amount), "Transfer failed");
         
         if (highestBidder != address(0)) {
-            // Refund previous bidder
             require(currency.transfer(highestBidder, highestBid), "Refund failed");
         }
 
@@ -99,29 +128,64 @@ contract AuctionGroup is Ownable {
     function resolveRound() external {
         require(groupStatus == Status.ACTIVE, "Not active");
         require(block.timestamp >= roundStart + AUCTION_DURATION, "Auction still active");
-        require(highestBidder != address(0), "No bids");
+        // require(highestBidder != address(0), "No bids"); // Allow resolving even if no bids (pot carries over? or random? For now assume bids)
         require(currentRound <= totalRounds, "Already completed");
 
-        // Payout Logic: Pool - Bid
-        uint256 pool = contribution * members.length;
-        uint256 payout = pool - highestBid;
+        // 1. Slash Defaulters & Calculate Pool
+        uint256 activeContributors = 0;
+        uint256 slashedCollateral = 0;
+
+        for (uint256 i = 0; i < members.length; i++) {
+            address member = members[i];
+            if (memberInfo[member].status == MemberStatus.ACTIVE) {
+                if (!hasContributed[currentRound][member]) {
+                    // Default Logic
+                    memberInfo[member].status = MemberStatus.DEFAULTED;
+                    slashedCollateral += collateral; 
+                    emit MemberDefaulted(member, currentRound);
+                } else {
+                    activeContributors++;
+                }
+            }
+        }
+
+        // 2. Calculate Payout
+        // Pool = (Active * Contribution) + Slashed Collateral (from this round)
+        // NOTE: Previous defaulted members don't pay.
+        // NOTE: Winner gets the pool collected.
+        
+        uint256 currentPool = (activeContributors * contribution) + slashedCollateral;
+        
+        // If no bids, maybe we just carry over? Or pay random?
+        // For CommitFi demo, let's require a bid to keep it simple, or refund pool (too complex).
+        // Let's assume there's always a bidder for now, or revert.
+        require(highestBidder != address(0), "No bids");
+
+        uint256 payout = currentPool - highestBid;
 
         // Effects
         hasReceivedPayout[highestBidder] = true;
         
         // Interactions
         require(currency.transfer(highestBidder, payout), "Payout failed");
-        
         emit RoundResolved(highestBidder, payout, highestBid, roundStart + frequency);
 
         // Prep Next Round
         currentRound++;
         if (currentRound > totalRounds) {
             groupStatus = Status.COMPLETED;
+            // Return Collateral to non-defaulted members?
+            // "The slashed pre-commitment... distributed... OR added to next cycle"
+            // We added slashed to current pool.
+            // Remaining Active members should get their collateral back?
+            // Simplification: Collateral stays in contract or refunded at very end. 
+            // Let's refund collateral to remaining active members now.
+            for (uint i = 0; i < members.length; i++) {
+                if (memberInfo[members[i]].status == MemberStatus.ACTIVE) {
+                     currency.transfer(members[i], collateral);
+                }
+            }
         } else {
-            // Reset for next cycle
-            // NOTE: Next auction starts at `roundStart + frequency`
-            // But we update `roundStart` to that future time.
             roundStart = roundStart + frequency;
             highestBidder = address(0);
             highestBid = 0;

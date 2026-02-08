@@ -13,7 +13,8 @@ export interface Group {
     startDate: string | null;
     status: GroupStatus;
     createdBy: string;
-    currentCycle?: number;
+    currentRound?: number;
+    collateral?: bigint;
     totalRounds?: number;
 }
 

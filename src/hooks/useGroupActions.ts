@@ -149,6 +149,20 @@ export function useGroupActions() {
                 args: []
             }) as bigint;
 
+            let collateral = BigInt(0);
+            if (groupType === 'AUCTION') {
+                collateral = await readContract(config, {
+                    address: groupId as `0x${string}`,
+                    abi: AuctionGroupABI,
+                    functionName: 'collateral',
+                    args: []
+                }) as bigint;
+            }
+
+            // Total required for Join = Contribution + Collateral (for Auctions)
+            const totalRequired = contribution + collateral;
+            console.log("JOIN_V2_DEBUG", { contribution, collateral, totalRequired });
+
             // 2. Fetch contribution amount & state from the specific Group Contract
             const groupState = await readContract(config, {
                 address: groupId as `0x${string}`,
@@ -186,18 +200,19 @@ export function useGroupActions() {
                 groupStatus: groupState,
                 memberCount: members.length,
                 contribution: contribution.toString(),
+                collateral: collateral.toString(),
                 userBalance: balance.toString(),
                 allowance: allowance.toString(),
-                hasSufficientBalance: balance >= contribution,
-                hasSufficientAllowance: allowance >= contribution
+                hasSufficientBalance: balance >= totalRequired,
+                hasSufficientAllowance: allowance >= totalRequired
             });
 
-            if (balance < contribution) {
-                throw new Error(`Insufficient USDC Balance. You have ${parseUnits(balance.toString(), -6)} but need ${parseUnits(contribution.toString(), -6)}`);
+            if (balance < totalRequired) {
+                throw new Error(`Insufficient USDC Balance. You have ${parseUnits(balance.toString(), -6)} but need ${parseUnits(totalRequired.toString(), -6)} (Inc. Collateral)`);
             }
 
             // 4. Approve if needed (spender = groupId)
-            if (allowance < contribution) {
+            if (allowance < totalRequired) {
                 console.log(`Requesting Approval for Group: ${groupId}`);
                 setStatus('approving');
 
@@ -205,7 +220,7 @@ export function useGroupActions() {
                     address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
                     abi: USDCABI,
                     functionName: 'approve',
-                    args: [groupId, contribution],
+                    args: [groupId, totalRequired],
                 });
 
                 setStatus('confirming_approval');
@@ -225,14 +240,14 @@ export function useGroupActions() {
                     }) as bigint;
 
                     console.log(`Allowance Check #${retries + 1}: ${allowance.toString()}`);
-                    if (allowance >= contribution) {
+                    if (allowance >= totalRequired) {
                         console.log("Allowance verified!");
                         break;
                     }
                     retries++;
                 }
 
-                if (allowance < contribution) {
+                if (allowance < totalRequired) {
                     throw new Error("Approval confirmed but allowance not updated. Please try again.");
                 }
             }
@@ -257,6 +272,57 @@ export function useGroupActions() {
             // Surface revert reason if available
             const reason = err.shortMessage || err.message || "Failed to join group";
             setError(reason);
+        }
+    };
+
+    const payContribution = async (groupId: string) => {
+        try {
+            if (!address) throw new Error("Wallet not connected");
+            setStatus('checking_allowance');
+
+            // 1. Fetch Contribution
+            const contribution = await readContract(config, {
+                address: groupId as `0x${string}`,
+                abi: AuctionGroupABI,
+                functionName: 'contribution',
+                args: []
+            }) as bigint;
+
+            // 2. Check/Approve Allowance
+            const allowance = await readContract(config, {
+                address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
+                abi: USDCABI,
+                functionName: 'allowance',
+                args: [address, groupId],
+            }) as bigint;
+
+            if (allowance < contribution) {
+                const approvalHash = await writeContractAsync({
+                    address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
+                    abi: USDCABI,
+                    functionName: 'approve',
+                    args: [groupId, contribution],
+                });
+                setStatus('confirming_approval');
+                await waitForTransactionReceipt(config, { hash: approvalHash });
+            }
+
+            // 3. Pay
+            setStatus('creating');
+            const hash = await writeContractAsync({
+                address: groupId as `0x${string}`,
+                abi: AuctionGroupABI,
+                functionName: 'payContribution',
+                args: [],
+            });
+            setStatus('confirming_creation');
+            await waitForTransactionReceipt(config, { hash });
+            setStatus('success');
+        } catch (err: any) {
+            console.error("Pay Contribution Error:", err);
+            setStatus('error');
+            const msg = err.shortMessage || err.message || "Failed to pay contribution";
+            setError(msg);
         }
     };
 
@@ -349,6 +415,7 @@ export function useGroupActions() {
         lockGroup,
         placeBid,
         resolveRound,
+        payContribution,
         status, // Expose status for UI feedback
         error,
         txHash
