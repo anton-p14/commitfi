@@ -137,30 +137,43 @@ export function useGroupActions() {
         }
     };
 
-    const joinGroup = async (groupId: string) => {
+    const joinGroup = async (groupId: string, groupType: GroupType) => {
         try {
             setStatus('checking_allowance');
             setError(null);
             if (!address) throw new Error("Wallet not connected");
 
-            // Fetch contribution amount first
+            // 1. Select ABI based on Group Type (Strict Separation)
+            const groupABI = groupType === 'AUCTION' ? AuctionGroupABI : StandardGroupABI;
+
+            // 2. Fetch contribution amount from the specific Group Contract
             const contribution = await readContract(config, {
                 address: groupId as `0x${string}`,
-                abi: StandardGroupABI,
+                abi: groupABI,
                 functionName: 'contribution',
                 args: []
             }) as bigint;
 
-            // Check Allowance
+            // 3. Check Allowance for THIS Group Contract (spender = groupId)
             const allowance = await readContract(config, {
                 address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
                 abi: USDCABI,
                 functionName: 'allowance',
-                args: [address, groupId], // User approves the GROUP contract to spend their USDC
+                args: [address, groupId],
             }) as bigint;
 
+            console.log("JOIN_DEBUG", {
+                groupAddress: groupId,
+                groupType,
+                contribution: contribution.toString(),
+                allowance: allowance.toString()
+            });
+
+            // 4. Approve if needed (spender = groupId)
             if (allowance < contribution) {
+                console.log(`Requesting Approval for Group: ${groupId}`);
                 setStatus('approving');
+
                 const approvalHash = await writeContractAsync({
                     address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
                     abi: USDCABI,
@@ -171,12 +184,14 @@ export function useGroupActions() {
 
                 setStatus('confirming_approval');
                 await waitForTransactionReceipt(config, { hash: approvalHash });
+                console.log("Approval Confirmed");
             }
 
+            // 5. Join Group
             setStatus('joining');
             const joinHash = await writeContractAsync({
                 address: groupId as `0x${string}`,
-                abi: StandardGroupABI,
+                abi: groupABI,
                 functionName: 'join',
                 args: [],
                 ...gasOverrides,
@@ -190,7 +205,9 @@ export function useGroupActions() {
         } catch (err: any) {
             console.error("Join Group Error:", err);
             setStatus('error');
-            setError(err.shortMessage || err.message || "Failed to join group");
+            // Surface revert reason if available
+            const reason = err.shortMessage || err.message || "Failed to join group";
+            setError(reason);
         }
     };
 

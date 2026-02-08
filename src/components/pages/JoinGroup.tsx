@@ -66,12 +66,12 @@ export function JoinGroup({ onNavigate, walletAddress }: JoinGroupProps) {
     return true;
   });
 
-  const handleJoin = (groupId: string) => {
+  const handleJoin = (groupId: string, groupType: any) => {
     if (!walletAddress) {
       alert("Please connect your wallet");
       return;
     }
-    joinGroup(groupId);
+    joinGroup(groupId, groupType);
     onNavigate('my-groups');
   };
 
@@ -126,7 +126,7 @@ export function JoinGroup({ onNavigate, walletAddress }: JoinGroupProps) {
               <JoinGroupCard
                 key={group.id}
                 group={group}
-                onJoin={() => handleJoin(group.id)}
+                onJoin={() => handleJoin(group.id, group.type)}
                 onNavigate={onNavigate}
               />
             ))
