@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useWriteContract, useAccount } from 'wagmi';
-import { parseUnits, parseGwei } from 'viem';
+import { parseUnits } from 'viem';
 import { CONTRACT_ADDRESSES } from '../contracts/addresses';
 import GroupFactoryABI from '../contracts/abis/GroupFactory.json';
 import StandardGroupABI from '../contracts/abis/StandardGroup.json';
@@ -19,11 +19,8 @@ export function useGroupActions() {
     const [txHash, setTxHash] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    // Gas Overrides for Arc Chain
-    const gasOverrides = {
-        maxFeePerGas: parseGwei('200'),
-        maxPriorityFeePerGas: parseGwei('2.5'),
-    };
+    // Helper for delay
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
     const createGroup = async (params: {
         name: string;
@@ -65,7 +62,6 @@ export function useGroupActions() {
                     abi: USDCABI,
                     functionName: 'approve',
                     args: [CONTRACT_ADDRESSES.GroupFactory, contributionAmount],
-                    ...gasOverrides,
                 });
 
                 console.log(`Approval Tx: ${approvalHash}`);
@@ -106,7 +102,6 @@ export function useGroupActions() {
                     BigInt(freqEnum),
                     groupTypeInt
                 ],
-                ...gasOverrides,
             });
 
             console.log(`Create Group Tx: ${createHash}`);
@@ -155,7 +150,7 @@ export function useGroupActions() {
             }) as bigint;
 
             // 3. Check Allowance for THIS Group Contract (spender = groupId)
-            const allowance = await readContract(config, {
+            let allowance = await readContract(config, {
                 address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
                 abi: USDCABI,
                 functionName: 'allowance',
@@ -179,12 +174,35 @@ export function useGroupActions() {
                     abi: USDCABI,
                     functionName: 'approve',
                     args: [groupId, contribution],
-                    ...gasOverrides,
                 });
 
                 setStatus('confirming_approval');
                 await waitForTransactionReceipt(config, { hash: approvalHash });
                 console.log("Approval Confirmed");
+
+                // 4.5 WAIT LOOP: Ensure allowance is updated on-chain before proceeding
+                console.log("Verifying allowance on-chain...");
+                let retries = 0;
+                while (retries < 15) { // Try for ~30 seconds
+                    await sleep(2000);
+                    allowance = await readContract(config, {
+                        address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
+                        abi: USDCABI,
+                        functionName: 'allowance',
+                        args: [address, groupId],
+                    }) as bigint;
+
+                    console.log(`Allowance Check #${retries + 1}: ${allowance.toString()}`);
+                    if (allowance >= contribution) {
+                        console.log("Allowance verified!");
+                        break;
+                    }
+                    retries++;
+                }
+
+                if (allowance < contribution) {
+                    throw new Error("Approval confirmed but allowance not updated. Please try again.");
+                }
             }
 
             // 5. Join Group
@@ -194,7 +212,6 @@ export function useGroupActions() {
                 abi: groupABI,
                 functionName: 'join',
                 args: [],
-                ...gasOverrides,
             });
 
             setTxHash(joinHash);
@@ -218,7 +235,6 @@ export function useGroupActions() {
                 abi: StandardGroupABI,
                 functionName: 'lock',
                 args: [],
-                ...gasOverrides,
             });
             await waitForTransactionReceipt(config, { hash });
         } catch (err) {
@@ -246,7 +262,6 @@ export function useGroupActions() {
                     abi: USDCABI,
                     functionName: 'approve',
                     args: [groupId, amountBig],
-                    ...gasOverrides,
                 });
                 await waitForTransactionReceipt(config, { hash: approvalHash });
             }
@@ -256,7 +271,6 @@ export function useGroupActions() {
                 abi: StandardGroupABI,
                 functionName: 'bid',
                 args: [amountBig],
-                ...gasOverrides,
             });
         } catch (err) {
             console.error(err);
@@ -272,7 +286,6 @@ export function useGroupActions() {
                 abi: AuctionGroupABI, // Use Auction ABI
                 functionName: 'resolveRound',
                 args: [],
-                ...gasOverrides,
             });
             setStatus('confirming_creation');
             await waitForTransactionReceipt(config, { hash });
