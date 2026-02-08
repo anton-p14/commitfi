@@ -260,17 +260,31 @@ export function useGroupActions() {
         }
     };
 
-    const lockGroup = async (groupId: string) => {
+    const lockGroup = async (groupId: string, groupType: GroupType) => {
         try {
+            if (!address) throw new Error("Wallet not connected");
+            setStatus('creating'); // Use creating status for loading spinner
+
+            // 1. Select ABI
+            const groupABI = groupType === 'AUCTION' ? AuctionGroupABI : StandardGroupABI;
+
             const hash = await writeContractAsync({
                 address: groupId as `0x${string}`,
-                abi: StandardGroupABI,
+                abi: groupABI,
                 functionName: 'lock',
                 args: [],
             });
+
+            console.log(`Lock Tx: ${hash}`);
+            setStatus('confirming_creation');
             await waitForTransactionReceipt(config, { hash });
-        } catch (err) {
-            console.error(err);
+            setStatus('success');
+            console.log("Group Locked Successfully");
+        } catch (err: any) {
+            console.error("Lock Group Error:", err);
+            setStatus('error');
+            const msg = err.shortMessage || err.message || "Failed to lock group";
+            setError(msg);
         }
     };
 

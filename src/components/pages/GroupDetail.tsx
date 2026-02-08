@@ -5,6 +5,9 @@ import type { Page } from '../../App';
 import { useGroups } from '../../hooks/useGroups';
 import { useGroupActions } from '../../hooks/useGroupActions';
 import { useAuction } from '../../hooks/useAuction';
+import { useReadContract, useAccount } from 'wagmi';
+import StandardGroupABI from '../../contracts/abis/StandardGroup.json';
+import AuctionGroupABI from '../../contracts/abis/AuctionGroup.json';
 
 interface GroupDetailProps {
   groupId: string | null;
@@ -20,9 +23,10 @@ function formatTime(seconds: number) {
 }
 
 export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
+  const { address: walletAddress } = useAccount(); // Get current wallet
   const [bidAmount, setBidAmount] = useState('');
   const allGroups = useGroups();
-  const { lockGroup, placeBid, resolveRound, status: txStatus } = useGroupActions();
+  const { lockGroup, placeBid, resolveRound, status } = useGroupActions(); // Use 'status' directly
 
   const rawGroup = groupId ? allGroups.find(g => g.id === groupId) : null;
   const isAuctionType = rawGroup?.type === 'AUCTION';
@@ -37,7 +41,8 @@ export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
     }
   };
 
-  const isPending = txStatus === 'approving' || txStatus === 'creating';
+  // const isPending = status === 'approving' || status === 'creating'; // Replaced by direct status check in UI if needed, or re-enable
+  const isPending = status === 'approving' || status === 'creating' || status === 'confirming_creation';
 
   if (!rawGroup) {
     return (
@@ -53,9 +58,21 @@ export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
   const isActive = group.status === 'ACTIVE';
   const isAuction = group.type === 'AUCTION';
 
+  // Fetch Owner to restrict Lock Action
+  const { data: ownerAddress } = useReadContract({
+    address: groupId as `0x${string}`,
+    abi: isAuctionType ? AuctionGroupABI : StandardGroupABI,
+    functionName: 'owner',
+    args: [],
+  });
+
+  // Use connected wallet from useAccount (wagmi) directly referenced in component? 
+  // We need to import useAccount in GroupDetail or pass it down. 
+  // GroupDetail doesn't have walletAddress prop, but we can use useAccount hook.
+
   const handleLock = () => {
     if (groupId) {
-      lockGroup(groupId);
+      lockGroup(groupId, group.type as 'STANDARD' | 'AUCTION');
     }
   };
 
@@ -175,12 +192,21 @@ export function GroupDetail({ groupId, onNavigate }: GroupDetailProps) {
             <div className="text-sm text-slate-500 mb-6">
               {currentMembersCount} of {group.memberLimit} members joined
             </div>
-            <button
-              onClick={handleLock}
-              className="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition-colors shadow-lg shadow-blue-500/20"
-            >
-              Lock Group (On-Chain)
-            </button>
+
+            {/* Ownership Check */}
+            {ownerAddress && walletAddress && ownerAddress.toString().toLowerCase() === walletAddress.toLowerCase() ? (
+              <button
+                onClick={handleLock}
+                className="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition-colors shadow-lg shadow-blue-500/20"
+              >
+                {status === 'creating' || status === 'confirming_creation' ? 'Locking...' : 'Lock Group (On-Chain)'}
+              </button>
+            ) : (
+              <div className="text-sm bg-slate-800/50 inline-block px-4 py-2 rounded-lg text-slate-400 border border-slate-700">
+                Only the Group Creator can lock the group.
+              </div>
+            )}
+
           </div>
         )}
 
