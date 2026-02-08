@@ -149,7 +149,29 @@ export function useGroupActions() {
                 args: []
             }) as bigint;
 
-            // 3. Check Allowance for THIS Group Contract (spender = groupId)
+            // 2. Fetch contribution amount & state from the specific Group Contract
+            const groupState = await readContract(config, {
+                address: groupId as `0x${string}`,
+                abi: groupABI,
+                functionName: 'groupStatus', // Check status
+                args: []
+            }) as number;
+
+            const members = await readContract(config, {
+                address: groupId as `0x${string}`,
+                abi: groupABI,
+                functionName: 'getMembers',
+                args: []
+            }) as string[];
+
+            // 3. Check Allowance & Balance
+            const balance = await readContract(config, {
+                address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
+                abi: USDCABI,
+                functionName: 'balanceOf',
+                args: [address],
+            }) as bigint;
+
             let allowance = await readContract(config, {
                 address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
                 abi: USDCABI,
@@ -158,11 +180,21 @@ export function useGroupActions() {
             }) as bigint;
 
             console.log("JOIN_DEBUG", {
+                user: address,
                 groupAddress: groupId,
                 groupType,
+                groupStatus: groupState,
+                memberCount: members.length,
                 contribution: contribution.toString(),
-                allowance: allowance.toString()
+                userBalance: balance.toString(),
+                allowance: allowance.toString(),
+                hasSufficientBalance: balance >= contribution,
+                hasSufficientAllowance: allowance >= contribution
             });
+
+            if (balance < contribution) {
+                throw new Error(`Insufficient USDC Balance. You have ${parseUnits(balance.toString(), -6)} but need ${parseUnits(contribution.toString(), -6)}`);
+            }
 
             // 4. Approve if needed (spender = groupId)
             if (allowance < contribution) {

@@ -1,9 +1,13 @@
 import { useState } from "react";
-import { Search, Filter, ArrowUpDown } from 'lucide-react';
+import { Search, Filter, ArrowUpDown, Wallet } from 'lucide-react';
 import { JoinGroupCard } from '../JoinGroupCard';
 import { FilterPanel, FilterState } from '../FilterPanel';
 import { useGroups } from '../../hooks/useGroups';
 import { useGroupActions } from '../../hooks/useGroupActions';
+import { useReadContract } from 'wagmi';
+import { formatUnits } from 'viem';
+import { CONTRACT_ADDRESSES } from '../../contracts/addresses';
+import USDCABI from '../../contracts/abis/USDC.json';
 import type { Page } from '../../App';
 
 interface JoinGroupProps {
@@ -75,6 +79,16 @@ export function JoinGroup({ onNavigate, walletAddress }: JoinGroupProps) {
     onNavigate('my-groups');
   };
 
+  // Fetch Balance for Debugging/UX
+  const result = useReadContract({
+    address: CONTRACT_ADDRESSES.USDC as `0x${string}`,
+    abi: USDCABI,
+    functionName: 'balanceOf',
+    args: [walletAddress || '0x0000000000000000000000000000000000000000'],
+  });
+
+  const balance = result.data ? formatUnits(result.data as bigint, 6) : '0';
+
   return (
     <div className="min-h-screen text-white relative">
       <div className="relative z-10 max-w-5xl mx-auto px-6 py-12">
@@ -82,6 +96,12 @@ export function JoinGroup({ onNavigate, walletAddress }: JoinGroupProps) {
           <div>
             <h1 className="text-3xl font-bold mb-2">Join a Group</h1>
             <p className="text-slate-400">Find and join active commitment circles</p>
+            {walletAddress && (
+              <div className="flex items-center gap-2 mt-2 text-emerald-400 text-sm bg-emerald-500/10 px-3 py-1 rounded-full w-fit">
+                <Wallet className="w-4 h-4" />
+                <span>Balance: {balance} USDC</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
