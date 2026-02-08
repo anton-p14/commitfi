@@ -5,17 +5,17 @@ node_modules/
 build/
 dist/
 
-# environment variables
+# environment
 .env
 .env.local
 .env.production
 
-# Vite / tooling
+# tooling
 .vite/
 
-# Vercel
+# vercel
 .vercel/
 
-# system files
+# system
 .DS_Store
 
